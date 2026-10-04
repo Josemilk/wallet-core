@@ -1,0 +1,29 @@
+name: Exchange Contracts
+
+on:
+  push:
+    paths:
+      - 'exchange/contracts/**'
+  pull_request:
+    paths:
+      - 'exchange/contracts/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: exchange/contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Install pinned OpenZeppelin Contracts
+        run: forge install OpenZeppelin/openzeppelin-contracts@v5.7.0 --no-commit
+      - name: Format check
+        run: forge fmt --check
+      - name: Build
+        run: forge build --sizes
+      - name: Test
+        run: forge test -vvv
