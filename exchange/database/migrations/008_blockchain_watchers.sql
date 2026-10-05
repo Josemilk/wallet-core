@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS observed_deposits (
   amount NUMERIC(78,0) NOT NULL CHECK (amount > 0),
   confirmations BIGINT NOT NULL DEFAULT 0,
   status TEXT NOT NULL CHECK (status IN ('observed','confirming','credited','reorged','ignored')),
+  ledger_transaction_id UUID REFERENCES ledger_transactions(id),
   first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
