@@ -20,11 +20,13 @@ func (s *Service) Create(ctx context.Context, r CreateRequest) error {
             if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM orders WHERE account_id=$1 AND client_order_id=$2)`, r.AccountID, r.ClientOrderID).Scan(&exists); err != nil { return err }
             if exists { return nil }
         }
+        var res pgx.Result
         if r.Side == "buy" {
-            if _, err := tx.Exec(ctx, `UPDATE balances SET available=available-$1, locked=locked+$1, version=version+1 WHERE account_id=$2 AND asset=$3 AND available >= $1`, r.Price*r.Quantity, r.AccountID, quoteAsset(r.Market)); err != nil { return err }
+            res, _ = tx.Exec(ctx, `UPDATE balances SET available=available-$1, locked=locked+$1, version=version+1 WHERE account_id=$2 AND asset=$3 AND available >= $1`, r.Price*r.Quantity, r.AccountID, quoteAsset(r.Market))
         } else {
-            if _, err := tx.Exec(ctx, `UPDATE balances SET available=available-$1, locked=locked+$1, version=version+1 WHERE account_id=$2 AND asset=$3 AND available >= $1`, r.Quantity, r.AccountID, baseAsset(r.Market)); err != nil { return err }
+            res, _ = tx.Exec(ctx, `UPDATE balances SET available=available-$1, locked=locked+$1, version=version+1 WHERE account_id=$2 AND asset=$3 AND available >= $1`, r.Quantity, r.AccountID, baseAsset(r.Market))
         }
+        if res.RowsAffected() != 1 { return errors.New("insufficient available balance or balance account missing") }
         _, err := tx.Exec(ctx, `INSERT INTO orders(id,account_id,market,side,type,price,quantity,status,client_order_id) VALUES($1,$2,$3,$4,$5,$6,$7,'open',NULLIF($8,''))`, r.ID,r.AccountID,r.Market,r.Side,r.Type,r.Price,r.Quantity,r.ClientOrderID)
         return err
     })
