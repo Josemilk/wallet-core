@@ -1,0 +1,5 @@
+package deposits
+
+import("context";"github.com/Josemilk/wallet-core/exchange/backend/internal/blockchain")
+
+func(o *SQLObserver)Refresh(ctx context.Context,network string,headHeight uint64)error{if o==nil||o.DB==nil||o.DB.Pool==nil{return nil};rows,err:=o.DB.Pool.Query(ctx,`SELECT tx_hash,block_height,block_hash,address,asset,COALESCE(contract_address,''),amount::text FROM observed_deposits WHERE network=$1 AND status IN ('observed','confirming') AND block_height <= $2 ORDER BY block_height`,network,headHeight);if err!=nil{return err};defer rows.Close();for rows.Next(){var txHash,blockHash,address,asset,contract,amount string;var height uint64;if err:=rows.Scan(&txHash,&height,&blockHash,&address,&asset,&contract,&amount);err!=nil{return err};conf:=headHeight-height+1;if err:=o.Observe(ctx,blockchain.ObservedDeposit{Network:network,TxHash:txHash,BlockHeight:height,BlockHash:blockHash,Address:address,Asset:asset,ContractAddress:contract,Amount:amount,Confirmations:conf});err!=nil{return err}};return rows.Err()}
