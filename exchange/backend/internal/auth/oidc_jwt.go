@@ -1,36 +1,12 @@
 package auth
 
-import (
- "context"
- "crypto/rsa"
- "crypto/sha256"
- "encoding/base64"
- "encoding/json"
- "errors"
- "fmt"
- "io"
- "math/big"
- "net/http"
- "strings"
- "sync"
- "time"
-)
+import("context";"crypto";"crypto/rsa";"crypto/sha256";"encoding/base64";"encoding/json";"errors";"fmt";"io";"math/big";"net/http";"strings";"sync";"time")
 
-type OIDCVerifier struct { Issuer string; Audience string; JWKSURL string; HTTP *http.Client; mu sync.RWMutex; keys map[string]*rsa.PublicKey; expiresAt time.Time }
-type jwtHeader struct { Alg string `json:"alg"`; Kid string `json:"kid"` }
-type jwks struct { Keys []struct { Kid string `json:"kid"`; Kty string `json:"kty"`; N string `json:"n"`; E string `json:"e"` } `json:"keys"` }
-
-func(v *OIDCVerifier) Verify(ctx context.Context,bearer string)(Principal,error){
- if v==nil||v.Issuer==""||v.Audience==""||v.JWKSURL==""{return Principal{},errors.New("OIDC verifier not configured")}
- parts:=strings.Split(bearer,".");if len(parts)!=3{return Principal{},errors.New("invalid JWT")}
- var h jwtHeader;if err:=decodeJSON(parts[0],&h);err!=nil||h.Alg!="RS256"||h.Kid==""{return Principal{},errors.New("unsupported JWT")}
- key,err:=v.key(ctx,h.Kid);if err!=nil{return Principal{},err}
- sig,err:=base64.RawURLEncoding.DecodeString(parts[2]);if err!=nil{return Principal{},errors.New("invalid JWT signature")};sum:=sha256.Sum256([]byte(parts[0]+"."+parts[1]));if err:=rsa.VerifyPKCS1v15(key,cryptoHashSHA256,sum[:],sig);err!=nil{return Principal{},errors.New("JWT signature verification failed")}
- var c struct{Sub string `json:"sub"`;Iss string `json:"iss"`;Aud any `json:"aud"`;Exp int64 `json:"exp"`;Iat int64 `json:"iat"`;Roles []string `json:"roles"`;Role string `json:"role"`};if err:=decodeJSON(parts[1],&c);err!=nil{return Principal{},err};if c.Sub==""||c.Iss!=v.Issuer||c.Exp<=time.Now().Unix(){return Principal{},errors.New("JWT claims rejected")};if !audienceMatches(c.Aud,v.Audience){return Principal{},errors.New("JWT audience rejected")};roles:=append([]string{},c.Roles...);if c.Role!=""{roles=append(roles,c.Role)};return Principal{UserID:c.Sub,Roles:roles},nil
-}
-func(v *OIDCVerifier) key(ctx context.Context,kid string)(*rsa.PublicKey,error){v.mu.RLock();k,ok:=v.keys[kid];fresh:=time.Now().Before(v.expiresAt);v.mu.RUnlock();if ok&&fresh{return k,nil};return v.refresh(ctx,kid)}
-func(v *OIDCVerifier) refresh(ctx context.Context,kid string)(*rsa.PublicKey,error){v.mu.Lock();defer v.mu.Unlock();if k,ok:=v.keys[kid];ok&&time.Now().Before(v.expiresAt){return k,nil};client:=v.HTTP;if client==nil{client=&http.Client{Timeout:10*time.Second}};req,err:=http.NewRequestWithContext(ctx,http.MethodGet,v.JWKSURL,nil);if err!=nil{return nil,err};resp,err:=client.Do(req);if err!=nil{return nil,err};defer resp.Body.Close();body,err:=io.ReadAll(io.LimitReader(resp.Body,2<<20));if err!=nil{return nil,err};if resp.StatusCode/100!=2{return nil,fmt.Errorf("JWKS status=%d",resp.StatusCode)};var set jwks;if err:=json.Unmarshal(body,&set);err!=nil{return nil,err};keys:=map[string]*rsa.PublicKey{};for _,j:=range set.Keys{if j.Kty!="RSA"||j.Kid==""{continue};nb,err:=base64.RawURLEncoding.DecodeString(j.N);if err!=nil{continue};eb,err:=base64.RawURLEncoding.DecodeString(j.E);if err!=nil{continue};n:=new(big.Int).SetBytes(nb);eBig:=new(big.Int).SetBytes(eb);if n.Sign()<=0||!eBig.IsInt64(){continue};e:=int(eBig.Int64());if e<=0{return nil,errors.New("invalid RSA exponent")};keys[j.Kid]=&rsa.PublicKey{N:n,E:e}};if len(keys)==0{return nil,errors.New("JWKS contains no usable RSA keys")};v.keys=keys;v.expiresAt=time.Now().Add(10*time.Minute);k,ok:=keys[kid];if !ok{return nil,errors.New("JWT kid not found")};return k,nil}
-
-const cryptoHashSHA256 = 5
+type OIDCVerifier struct{Issuer string;Audience string;JWKSURL string;HTTP *http.Client;mu sync.RWMutex;keys map[string]*rsa.PublicKey;expiresAt time.Time}
+type jwtHeader struct{Alg string `json:"alg"`;Kid string `json:"kid"`}
+type jwks struct{Keys []struct{Kid string `json:"kid"`;Kty string `json:"kty"`;N string `json:"n"`;E string `json:"e"`} `json:"keys"`}
+func(v *OIDCVerifier)Verify(ctx context.Context,bearer string)(Principal,error){if v==nil||v.Issuer==""||v.Audience==""||v.JWKSURL==""{return Principal{},errors.New("OIDC verifier not configured")};parts:=strings.Split(bearer,".");if len(parts)!=3{return Principal{},errors.New("invalid JWT")};var h jwtHeader;if err:=decodeJSON(parts[0],&h);err!=nil||h.Alg!="RS256"||h.Kid==""{return Principal{},errors.New("unsupported JWT")};key,err:=v.key(ctx,h.Kid);if err!=nil{return Principal{},err};sig,err:=base64.RawURLEncoding.DecodeString(parts[2]);if err!=nil{return Principal{},errors.New("invalid JWT signature")};sum:=sha256.Sum256([]byte(parts[0]+"."+parts[1]));if err:=rsa.VerifyPKCS1v15(key,crypto.SHA256,sum[:],sig);err!=nil{return Principal{},errors.New("JWT signature verification failed")};var c struct{Sub string `json:"sub"`;Iss string `json:"iss"`;Aud any `json:"aud"`;Exp int64 `json:"exp"`;Iat int64 `json:"iat"`;Roles []string `json:"roles"`;Role string `json:"role"`};if err:=decodeJSON(parts[1],&c);err!=nil{return Principal{},err};if c.Sub==""||c.Iss!=v.Issuer||c.Exp<=time.Now().Unix(){return Principal{},errors.New("JWT claims rejected")};if !audienceMatches(c.Aud,v.Audience){return Principal{},errors.New("JWT audience rejected")};roles:=append([]string{},c.Roles...);if c.Role!=""{roles=append(roles,c.Role)};return Principal{UserID:c.Sub,Roles:roles},nil}
+func(v *OIDCVerifier)key(ctx context.Context,kid string)(*rsa.PublicKey,error){v.mu.RLock();k,ok:=v.keys[kid];fresh:=time.Now().Before(v.expiresAt);v.mu.RUnlock();if ok&&fresh{return k,nil};return v.refresh(ctx,kid)}
+func(v *OIDCVerifier)refresh(ctx context.Context,kid string)(*rsa.PublicKey,error){v.mu.Lock();defer v.mu.Unlock();if k,ok:=v.keys[kid];ok&&time.Now().Before(v.expiresAt){return k,nil};client:=v.HTTP;if client==nil{client=&http.Client{Timeout:10*time.Second}};req,err:=http.NewRequestWithContext(ctx,http.MethodGet,v.JWKSURL,nil);if err!=nil{return nil,err};resp,err:=client.Do(req);if err!=nil{return nil,err};defer resp.Body.Close();body,err:=io.ReadAll(io.LimitReader(resp.Body,2<<20));if err!=nil{return nil,err};if resp.StatusCode/100!=2{return nil,fmt.Errorf("JWKS status=%d",resp.StatusCode)};var set jwks;if err:=json.Unmarshal(body,&set);err!=nil{return nil,err};keys:=map[string]*rsa.PublicKey{};for _,j:=range set.Keys{if j.Kty!="RSA"||j.Kid==""{continue};nb,err:=base64.RawURLEncoding.DecodeString(j.N);if err!=nil{continue};eb,err:=base64.RawURLEncoding.DecodeString(j.E);if err!=nil{continue};n:=new(big.Int).SetBytes(nb);eBig:=new(big.Int).SetBytes(eb);if n.Sign()<=0||!eBig.IsInt64(){continue};e:=int(eBig.Int64());if e<=0{return nil,errors.New("invalid RSA exponent")};keys[j.Kid]=&rsa.PublicKey{N:n,E:e}};if len(keys)==0{return nil,errors.New("JWKS contains no usable RSA keys")};v.keys=keys;v.expiresAt=time.Now().Add(10*time.Minute);k,ok:=keys[kid];if !ok{return nil,errors.New("JWT kid not found")};return k,nil}
 func decodeJSON(s string,v any)error{b,err:=base64.RawURLEncoding.DecodeString(s);if err!=nil{return err};return json.Unmarshal(b,v)}
 func audienceMatches(a any,want string)bool{switch x:=a.(type){case string:return x==want;case []any:for _,v:=range x{if s,ok:=v.(string);ok&&s==want{return true}}};return false}
