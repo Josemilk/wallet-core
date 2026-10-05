@@ -7,7 +7,7 @@ import (
     "github.com/jackc/pgx/v5"
 )
 
-type Posting struct { TransactionID, IdempotencyKey, Type string; DebitAccountID, CreditAccountID, Asset string; Amount int64 }
+type Posting struct { TransactionID, IdempotencyKey, Type string; DebitAccountID, CreditAccountID, Asset string; Amount int64; DebitFromLocked bool }
 type Poster struct { DB *db.DB }
 
 // Positive amounts credit the destination account; negative amounts debit it.
@@ -27,7 +27,10 @@ func (p *Poster) Post(ctx context.Context, j Posting) error {
         if _,err:=tx.Exec(ctx,`INSERT INTO ledger_transactions(id,idempotency_key,type) VALUES($1,$2,$3)`,j.TransactionID,j.IdempotencyKey,j.Type);err!=nil{return err}
         if _,err:=tx.Exec(ctx,`INSERT INTO ledger_entries(transaction_id,account_id,asset,amount) VALUES($1,$2,$3,$4),($1,$5,$3,$6)`,j.TransactionID,j.DebitAccountID,j.Asset,-j.Amount,j.CreditAccountID,j.Amount);err!=nil{return err}
         if debitKind != "SYSTEM" {
-            if r,err:=tx.Exec(ctx,`UPDATE balances SET available=available-$1,version=version+1 WHERE account_id=$2 AND asset=$3 AND available >= $1`,j.Amount,j.DebitAccountID,j.Asset);err!=nil{return err}else if r.RowsAffected()!=1{return errors.New("insufficient debit account balance")}
+            column := "available"
+            if j.DebitFromLocked { column = "locked" }
+            q:=`UPDATE balances SET `+column+`=`+column+`-$1,version=version+1 WHERE account_id=$2 AND asset=$3 AND `+column+` >= $1`
+            if r,err:=tx.Exec(ctx,q,j.Amount,j.DebitAccountID,j.Asset);err!=nil{return err}else if r.RowsAffected()!=1{return errors.New("insufficient debit account balance")}
         }
         if creditKind != "SYSTEM" {
             if r,err:=tx.Exec(ctx,`UPDATE balances SET available=available+$1,version=version+1 WHERE account_id=$2 AND asset=$3`,j.Amount,j.CreditAccountID,j.Asset);err!=nil{return err}else if r.RowsAffected()!=1{return errors.New("credit account balance missing")}
