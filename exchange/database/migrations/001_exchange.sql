@@ -96,7 +96,13 @@ CREATE OR REPLACE FUNCTION enforce_ledger_balance() RETURNS trigger AS $$
 DECLARE total NUMERIC(78,0);
 BEGIN
   SELECT COALESCE(SUM(amount),0) INTO total FROM ledger_entries WHERE transaction_id = NEW.transaction_id;
-  -- The application must post a complete transaction atomically; a deferred constraint trigger should be added by deployment.
-  RETURN NEW;
+  IF total <> 0 THEN RAISE EXCEPTION 'ledger transaction % is unbalanced', NEW.transaction_id; END IF;
+  RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS ledger_balance_deferred ON ledger_entries;
+CREATE CONSTRAINT TRIGGER ledger_balance_deferred
+AFTER INSERT OR UPDATE OR DELETE ON ledger_entries
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION enforce_ledger_balance();
