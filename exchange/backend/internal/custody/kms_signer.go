@@ -3,7 +3,6 @@ package custody
 import (
  "bytes"
  "context"
- "crypto/sha256"
  "encoding/base64"
  "encoding/json"
  "errors"
@@ -20,8 +19,9 @@ type SignatureAssembler interface { Assemble(ctx context.Context,network,rawTran
 
 type CloudKMSSigner struct { Endpoint,KeyVersion string; Tokens TokenSource; Digestor Digestor; Assembler SignatureAssembler; HTTP *http.Client }
 
-// CloudKMSSigner calls Google Cloud KMS asymmetricSign. The KMS key can be
-// configured with protection_level=HSM. Private key material never enters this process.
+// CloudKMSSigner calls Google Cloud KMS asymmetricSign. Configure the KMS key
+// with protection_level=HSM for hardware-backed custody. Private key material
+// never enters this process. Digestor and Assembler must be chain-specific.
 func(s *CloudKMSSigner) Sign(ctx context.Context,req SignRequest)(string,error){
  if s==nil||s.Tokens==nil||s.Digestor==nil||s.Assembler==nil{return "",errors.New("KMS signer dependencies missing")};if req.KeyRef==""||req.Network==""||req.RawTransaction==""{return "",errors.New("invalid signing request")}
  digest,err:=s.Digestor.Digest(ctx,req.Network,req.RawTransaction);if err!=nil{return "",err};if len(digest)==0{return "",errors.New("empty transaction digest")}
@@ -31,9 +31,5 @@ func(s *CloudKMSSigner) Sign(ctx context.Context,req SignRequest)(string,error){
  client:=s.HTTP;if client==nil{client=&http.Client{Timeout:15*time.Second}}
  httpReq,err:=http.NewRequestWithContext(ctx,http.MethodPost,url,bytes.NewReader(body));if err!=nil{return "",err};httpReq.Header.Set("Authorization","Bearer "+token);httpReq.Header.Set("Content-Type","application/json")
  resp,err:=client.Do(httpReq);if err!=nil{return "",err};defer resp.Body.Close();raw,readErr:=io.ReadAll(io.LimitReader(resp.Body,1<<20));if readErr!=nil{return "",readErr};if resp.StatusCode/100!=2{return "",fmt.Errorf("KMS signing failed: status=%d body=%s",resp.StatusCode,string(raw))}
- var out struct{Signature string `json:"signature"`};if err:=json.Unmarshal(raw,&out);err!=nil{return "",err};if out.Signature==""{return "",errors.New("KMS returned empty signature")}
- sig,err:=base64.StdEncoding.DecodeString(out.Signature);if err!=nil{return "",err};return s.Assembler.Assemble(ctx,req.Network,req.RawTransaction,sig)
+ var out struct{Signature string `json:"signature"`};if err:=json.Unmarshal(raw,&out);err!=nil{return "",err};if out.Signature==""{return "",errors.New("KMS returned empty signature")};sig,err:=base64.StdEncoding.DecodeString(out.Signature);if err!=nil{return "",err};return s.Assembler.Assemble(ctx,req.Network,req.RawTransaction,sig)
 }
-
-type SHA256Digestor struct{}
-func(SHA256Digestor)Digest(ctx context.Context,network,raw string)([]byte,error){if raw==""{return nil,errors.New("empty transaction")};sum:=sha256.Sum256([]byte(raw));return sum[:],nil}
