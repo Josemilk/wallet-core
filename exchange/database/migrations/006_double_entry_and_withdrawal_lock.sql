@@ -18,5 +18,9 @@ CREATE TABLE IF NOT EXISTS withdrawal_ledger_links (
   ledger_transaction_id UUID NOT NULL UNIQUE REFERENCES ledger_transactions(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
+CREATE TABLE IF NOT EXISTS withdrawal_queue_ledger_links (
+  withdrawal_queue_id UUID PRIMARY KEY REFERENCES withdrawal_queue(id),
+  ledger_transaction_id UUID NOT NULL UNIQUE REFERENCES ledger_transactions(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE INDEX IF NOT EXISTS withdrawal_queue_claim_idx ON withdrawal_queue(status, available_after, created_at, id);
