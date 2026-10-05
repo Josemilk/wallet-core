@@ -5,11 +5,13 @@ on:
     paths:
       - 'exchange/backend/**'
       - 'exchange/database/**'
+      - 'exchange/docs/**'
       - '.github/workflows/exchange-backend.yml'
   pull_request:
     paths:
       - 'exchange/backend/**'
       - 'exchange/database/**'
+      - 'exchange/docs/**'
       - '.github/workflows/exchange-backend.yml'
   workflow_dispatch:
 
