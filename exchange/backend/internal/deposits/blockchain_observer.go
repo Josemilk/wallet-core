@@ -1,0 +1,54 @@
+package deposits
+
+import (
+ "context"
+ "errors"
+ "fmt"
+ "github.com/Josemilk/wallet-core/exchange/backend/internal/blockchain"
+ "github.com/Josemilk/wallet-core/exchange/backend/internal/db"
+ "github.com/jackc/pgx/v5"
+)
+
+type SQLObserver struct { DB *db.DB; RequiredConfirmations uint64 }
+
+func(o *SQLObserver) Observe(ctx context.Context,d blockchain.ObservedDeposit) error {
+ if o==nil||o.DB==nil||o.DB.Pool==nil{return errors.New("deposit observer database unavailable")};if d.Network==""||d.TxHash==""||d.Address==""||d.Asset==""||d.Amount=="0"{return errors.New("invalid observed deposit")}
+ return db.WithTx(ctx,o.DB.Pool,func(tx pgx.Tx)error{
+  var userID,accountID string
+  var active bool
+  err:=tx.QueryRow(ctx,`SELECT user_id::text,account_id::text,active FROM deposit_addresses WHERE network=$1 AND lower(address)=lower($2) AND asset=$3 AND COALESCE(contract_address,'')=COALESCE(NULLIF($4,''),'')`,d.Network,d.Address,d.Asset,d.ContractAddress).Scan(&userID,&accountID,&active)
+  if err==pgx.ErrNoRows{return nil};if err!=nil{return err};if !active{return nil}
+  var status string
+  if err:=tx.QueryRow(ctx,`INSERT INTO observed_deposits(network,tx_hash,block_height,block_hash,address,asset,contract_address,amount,confirmations,status) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,CASE WHEN $9 >= $10 THEN 'confirming' ELSE 'observed' END) ON CONFLICT(network,tx_hash,address,asset,COALESCE(contract_address,'')) DO UPDATE SET block_height=EXCLUDED.block_height,block_hash=EXCLUDED.block_hash,confirmations=GREATEST(observed_deposits.confirmations,EXCLUDED.confirmations),updated_at=now() RETURNING status`,d.Network,d.TxHash,d.BlockHeight,d.BlockHash,d.Address,d.Asset,d.ContractAddress,d.Amount,d.Confirmations,o.RequiredConfirmations).Scan(&status);err!=nil{return err}
+  if d.Confirmations < o.RequiredConfirmations{return nil}
+  var already bool
+  if err:=tx.QueryRow(ctx,`SELECT EXISTS(SELECT 1 FROM observed_deposits WHERE network=$1 AND tx_hash=$2 AND address=$3 AND asset=$4 AND COALESCE(contract_address,'')=COALESCE(NULLIF($5,''),'') AND status='credited')`,d.Network,d.TxHash,d.Address,d.Asset,d.ContractAddress).Scan(&already);err!=nil{return err};if already{return nil}
+  var systemID string
+  if err:=tx.QueryRow(ctx,`SELECT id::text FROM accounts WHERE kind='SYSTEM' AND asset=$1 FOR UPDATE`,d.Asset).Scan(&systemID);err==pgx.ErrNoRows{if _,err:=tx.Exec(ctx,`INSERT INTO accounts(user_id,asset,kind) VALUES(NULL,$1,'SYSTEM') ON CONFLICT DO NOTHING`,d.Asset);err!=nil{return err};if err:=tx.QueryRow(ctx,`SELECT id::text FROM accounts WHERE kind='SYSTEM' AND asset=$1 FOR UPDATE`,d.Asset).Scan(&systemID);err!=nil{return err}}else if err!=nil{return err}
+  var txID string
+  key:=fmt.Sprintf("deposit:%s:%s:%s:%s:%s",d.Network,d.TxHash,d.Address,d.Asset,d.ContractAddress)
+  if err:=tx.QueryRow(ctx,`INSERT INTO ledger_transactions(idempotency_key,type) VALUES($1,'deposit') ON CONFLICT(idempotency_key) DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING id::text`,key).Scan(&txID);err!=nil{return err}
+  if _,err:=tx.Exec(ctx,`INSERT INTO ledger_entries(transaction_id,account_id,asset,amount) VALUES($1,$2,$3,$4),($1,$5,$3,$6) ON CONFLICT DO NOTHING`,txID,systemID,d.Asset,"-"+d.Amount,accountID,d.Amount);err!=nil{return err}
+  if _,err:=tx.Exec(ctx,`INSERT INTO balances(account_id,asset,available,locked,version) VALUES($1,$2,0,0,0) ON CONFLICT(account_id,asset) DO NOTHING`,accountID,d.Asset);err!=nil{return err}
+  res,err:=tx.Exec(ctx,`UPDATE balances SET available=available+$1,version=version+1 WHERE account_id=$2 AND asset=$3`,d.Amount,accountID,d.Asset);if err!=nil{return err};if res.RowsAffected()!=1{return errors.New("deposit balance row missing")}
+  if _,err:=tx.Exec(ctx,`UPDATE deposits SET confirmations=$1,status='credited' WHERE network=$2 AND tx_hash=$3 AND user_id=$4`,d.Confirmations,d.Network,d.TxHash,userID);err!=nil{return err}
+  if _,err:=tx.Exec(ctx,`UPDATE observed_deposits SET status='credited',ledger_transaction_id=$1,updated_at=now() WHERE network=$2 AND tx_hash=$3 AND address=$4 AND asset=$5 AND COALESCE(contract_address,'')=COALESCE(NULLIF($6,''),'')`,txID,d.Network,d.TxHash,d.Address,d.Asset,d.ContractAddress);err!=nil{return err}
+  return nil
+ })
+}
+
+func(o *SQLObserver) Rollback(ctx context.Context,d blockchain.ObservedDeposit) error {
+ if o==nil||o.DB==nil||o.DB.Pool==nil{return errors.New("deposit observer database unavailable")}
+ return db.WithTx(ctx,o.DB.Pool,func(tx pgx.Tx)error{
+  var observedID,userID,accountID,asset,originalLedger,status string
+  var amount string
+  err:=tx.QueryRow(ctx,`SELECT od.id::text,da.user_id::text,da.account_id::text,od.asset,od.amount::text,COALESCE(od.ledger_transaction_id::text,''),od.status FROM observed_deposits od JOIN deposit_addresses da ON da.network=od.network AND lower(da.address)=lower(od.address) AND da.asset=od.asset AND COALESCE(da.contract_address,'')=COALESCE(od.contract_address,'') WHERE od.network=$1 AND od.tx_hash=$2 AND od.address=$3 AND od.asset=$4 AND COALESCE(od.contract_address,'')=COALESCE(NULLIF($5,''),'') FOR UPDATE`,d.Network,d.TxHash,d.Address,d.Asset,d.ContractAddress).Scan(&observedID,&userID,&accountID,&asset,&amount,&originalLedger,&status);if err==pgx.ErrNoRows{return nil};if err!=nil{return err};if status!="credited"||originalLedger==""{return nil}
+  var systemID string;if err:=tx.QueryRow(ctx,`SELECT id::text FROM accounts WHERE kind='SYSTEM' AND asset=$1 FOR UPDATE`,asset).Scan(&systemID);err!=nil{return err}
+  key:=fmt.Sprintf("deposit-reversal:%s",observedID);var reversalID string;if err:=tx.QueryRow(ctx,`INSERT INTO ledger_transactions(idempotency_key,type) VALUES($1,'deposit_reversal') ON CONFLICT(idempotency_key) DO UPDATE SET idempotency_key=EXCLUDED.idempotency_key RETURNING id::text`,key).Scan(&reversalID);err!=nil{return err}
+  if _,err:=tx.Exec(ctx,`INSERT INTO ledger_entries(transaction_id,account_id,asset,amount) VALUES($1,$2,$3,$4),($1,$5,$3,$6) ON CONFLICT DO NOTHING`,reversalID,systemID,asset,amount,accountID,"-"+amount);err!=nil{return err}
+  res,err:=tx.Exec(ctx,`UPDATE balances SET available=available-$1,version=version+1 WHERE account_id=$2 AND asset=$3 AND available >= $1`,amount,accountID,asset);if err!=nil{return err};if res.RowsAffected()!=1{return errors.New("cannot rollback credited deposit balance")}
+  if _,err:=tx.Exec(ctx,`UPDATE observed_deposits SET status='reorged',reversal_ledger_transaction_id=$1,updated_at=now() WHERE id=$2`,reversalID,observedID);err!=nil{return err}
+  if _,err:=tx.Exec(ctx,`UPDATE deposits SET status='reorged' WHERE network=$1 AND tx_hash=$2 AND user_id=$3`,d.Network,d.TxHash,userID);err!=nil{return err}
+  return nil
+ })
+}
