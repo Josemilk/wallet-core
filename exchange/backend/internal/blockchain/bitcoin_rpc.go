@@ -10,3 +10,14 @@ func(n *BitcoinRPC)BlockHash(ctx context.Context,height uint64)(string,error){va
 func(n *BitcoinRPC)Block(ctx context.Context,hash string)(map[string]any,error){var b map[string]any;if err:=n.call(ctx,"getblock",[]any{hash,2},&b);err!=nil{return nil,err};return b,nil}
 func(n *BitcoinRPC)RawTransaction(ctx context.Context,hash string)(map[string]any,error){var t map[string]any;if err:=n.call(ctx,"getrawtransaction",[]any{hash,true},&t);err!=nil{return nil,err};return t,nil}
 func(n *BitcoinRPC)SendRawTransaction(ctx context.Context,raw string)(string,error){raw=strings.TrimSpace(raw);if raw==""{return "",errors.New("empty raw transaction")};if len(raw)%2!=0{return "",errors.New("raw Bitcoin transaction must have even-length hex")};if _,err:=hex.DecodeString(raw);err!=nil{return "",errors.New("raw Bitcoin transaction is not valid hex")};var h string;if err:=n.call(ctx,"sendrawtransaction",[]any{raw},&h);err!=nil{return "",err};return h,nil}
+
+func(n *BitcoinRPC) WaitForTransaction(ctx context.Context, hash string, interval time.Duration) (map[string]any, error) {
+    if strings.TrimSpace(hash)=="" { return nil, errors.New("transaction hash is required") }
+    if interval<=0 { interval=3*time.Second }
+    ticker:=time.NewTicker(interval); defer ticker.Stop()
+    for {
+        tx,err:=n.RawTransaction(ctx,hash)
+        if err==nil && tx!=nil { return tx,nil }
+        select { case <-ctx.Done(): return nil,ctx.Err(); case <-ticker.C: }
+    }
+}
