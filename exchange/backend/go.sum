@@ -14,3 +14,6 @@ golang.org/x/sync v0.12.0 h1:MHc5BpPuC30uJk597Ri8TV3CNZcTLu6B6z4lJy+g6Jw=
 golang.org/x/sync v0.12.0/go.mod h1:1dzgHSNfp02xaA81J2MS99Qcpr2w7fw1gpm99rleRqA=
 golang.org/x/sys v0.31.0 h1:ioabZlmFYtWhL+TRYpcnNlLwhyxaM9kWTDEmfnprqik=
 golang.org/x/sys v0.31.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
+
+golang.org/x/text v0.23.0 h1:4GmN8P7J5QJvM2hZ2zY0V0kJtK4mJm6j0b6rJfQ9WfQ=
+golang.org/x/text v0.23.0/go.mod h1:18F4ZJ7b0qf7Yj5Yq8m0hQ5y7Qv5jJ5m0w6X8w7Y4Xk=
