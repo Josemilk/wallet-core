@@ -1,8 +1,13 @@
 name: Exchange Android UI
 
 on:
+  push:
+    branches: [ exchange-platform-foundation, exchange-phases-14-21 ]
+    paths:
+      - 'android/**'
+      - '.github/workflows/exchange-android-ui.yml'
   pull_request:
-    branches: [ exchange-phases-14-21 ]
+    branches: [ exchange-platform-foundation, exchange-phases-14-21 ]
     paths:
       - 'android/**'
       - '.github/workflows/exchange-android-ui.yml'
@@ -24,6 +29,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: 8.10.2
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses >/dev/null
+      - name: Install required Android NDK
+        run: sdkmanager "ndk;28.0.12674087"
       - name: Compile exchange Android app
         working-directory: android
         run: ./gradlew :app:assembleDebug --stacktrace
